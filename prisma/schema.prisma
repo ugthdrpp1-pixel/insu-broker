@@ -1,0 +1,453 @@
+// Prisma schema for Insu - Insurance Sales Management System
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// STRING-VALID FIELDS (SQLite has no enums)
+//   UserRole: ADMIN | MANAGER | AGENT | CUSTOMER
+//   ProductType: LIFE | HEALTH | MOTOR | PA | PROPERTY
+//   PolicyStatus: PENDING | ACTIVE | EXPIRED | CANCELLED | LAPSED
+//   PaymentStatus: PENDING | PAID | OVERDUE | CANCELLED | REFUNDED
+//   PaymentMethod / ClaimStatus / LeadStatus / QuoteStatus: see seed data
+// ============================================================================
+
+// Auth & Users
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  role          String   @default("AGENT")
+  avatar        String?
+  isActive      Boolean  @default(true)
+  employeeCode  String?  @unique
+  department    String?
+  locale        String   @default("th")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastLoginAt   DateTime?
+
+  customerProfile  CustomerProfile? @relation("UserCustomer")
+  leads            Lead[]            @relation("AgentLeads")
+  quotes           Quote[]           @relation("AgentQuotes")
+  policies         Policy[]          @relation("AgentPolicies")
+  claims           Claim[]           @relation("AgentClaims")
+  commissions      Commission[]
+  paymentsReceived Payment[]         @relation("PaymentReceiver")
+  notifications    Notification[]
+  auditLogs        AuditLog[]        @relation("ActorLogs")
+
+  @@index([email])
+  @@index([role])
+}
+
+// CRM
+model CustomerProfile {
+  id               String   @id @default(cuid())
+  userId           String?  @unique
+  customerCode     String   @unique
+  firstNameTh      String?
+  lastNameTh       String?
+  firstNameEn      String?
+  lastNameEn       String?
+  idCardNumber     String?
+  dateOfBirth      DateTime?
+  gender           String? // MALE, FEMALE, OTHER
+  occupation       String?
+  maritalStatus    String? // SINGLE, MARRIED, DIVORCED, WIDOWED
+  phone            String?
+  email            String?
+  addressLine      String?
+  subDistrict      String?
+  district         String?
+  province         String?
+  postalCode       String?
+  country          String   @default("TH")
+  emergencyContact String?
+  emergencyPhone   String?
+  healthInfo       String?
+  notes            String?
+  tags             String?
+  referralSource   String?
+  referralById     String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user      User?       @relation("UserCustomer", fields: [userId], references: [id])
+  quotes    Quote[]
+  policies  Policy[]
+  claims    Claim[]
+  documents Document[]
+  leads     Lead[]
+  payments  Payment[]
+
+  @@index([customerCode])
+  @@index([phone])
+  @@index([email])
+}
+
+// Leads / Sales Pipeline
+model Lead {
+  id               String    @id @default(cuid())
+  firstName        String
+  lastName         String
+  phone            String
+  email            String?
+  source           String? // WEBSITE, REFERRAL, WALK_IN, SOCIAL, ADVERTISEMENT
+  status           String    @default("NEW") // NEW, CONTACTED, QUALIFIED, NEGOTIATING, CONVERTED, LOST
+  interestedProduct String?
+  estimatedValue   Float?
+  notes            String?
+  followUpAt       DateTime?
+  customerId       String?
+  agentId          String
+  convertedAt      DateTime?
+  lostReason       String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  customer CustomerProfile? @relation(fields: [customerId], references: [id])
+  agent    User             @relation("AgentLeads", fields: [agentId], references: [id])
+
+  @@index([status])
+  @@index([agentId])
+}
+
+// Products
+model InsuranceProduct {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  type          String // LIFE, HEALTH, MOTOR, PA, PROPERTY
+  nameTh        String
+  nameEn        String
+  descriptionTh String?
+  descriptionEn String?
+  iconName      String?
+  isActive      Boolean  @default(true)
+  displayOrder  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  plans     InsurancePlan[]
+  rateCards RateCard[]
+  quotes    Quote[]
+  policies  Policy[]
+  claims    Claim[]
+
+  @@index([type])
+}
+
+model InsurancePlan {
+  id              String   @id @default(cuid())
+  productId       String
+  code            String   @unique
+  nameTh          String
+  nameEn          String
+  descriptionTh   String?
+  descriptionEn   String?
+  minSumInsured   Float    @default(0)
+  maxSumInsured   Float?
+  minAge          Int?
+  maxAge          Int?
+  coverageDetails String?
+  exclusions      String?
+  features        String?
+  basePremium     Float?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  product   InsuranceProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  rateCards RateCard[]
+  quotes    Quote[]
+  policies  Policy[]
+
+  @@index([productId])
+}
+
+model RateCard {
+  id               String    @id @default(cuid())
+  productId        String
+  planId           String?
+  minAge           Int
+  maxAge           Int
+  baseRate         Float
+  multiplier       Float     @default(1.0)
+  genderFactor     Float     @default(1.0)
+  occupationFactor Float     @default(1.0)
+  effectiveFrom    DateTime  @default(now())
+  effectiveTo      DateTime?
+  createdAt        DateTime  @default(now())
+
+  product InsuranceProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  plan    InsurancePlan?   @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([planId])
+}
+
+// Quotes
+model Quote {
+  id                String    @id @default(cuid())
+  quoteNumber       String    @unique
+  customerId        String
+  agentId           String
+  productId         String
+  planId            String
+  firstName         String
+  lastName          String
+  age               Int
+  gender            String
+  occupation        String?
+  sumInsured        Float
+  premium           Float
+  coverageTerm      Int
+  paymentFreq       String    @default("ANNUAL") // ANNUAL | SEMI_ANNUAL | QUARTERLY | MONTHLY
+  startDate         DateTime?
+  endDate           DateTime?
+  riderOptions      String?
+  breakdown         String?
+  status            String    @default("DRAFT") // DRAFT | SENT | ACCEPTED | REJECTED | EXPIRED | CONVERTED
+  validUntil        DateTime?
+  notes             String?
+  rejectionReason   String?
+  convertedPolicyId String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  customer CustomerProfile  @relation(fields: [customerId], references: [id])
+  agent    User             @relation("AgentQuotes", fields: [agentId], references: [id])
+  product  InsuranceProduct @relation(fields: [productId], references: [id])
+  plan     InsurancePlan    @relation(fields: [planId], references: [id])
+
+  @@index([status])
+  @@index([customerId])
+  @@index([agentId])
+}
+
+// Policies
+model Policy {
+  id                 String    @id @default(cuid())
+  policyNumber       String    @unique
+  quoteId            String?
+  customerId         String
+  agentId            String
+  productId          String
+  planId             String
+  coverageTerm       Int
+  sumInsured         Float
+  premium            Float
+  paymentFreq        String    @default("ANNUAL")
+  startDate          DateTime
+  endDate            DateTime
+  nextRenewalDate    DateTime?
+  status             String    @default("ACTIVE") // PENDING | ACTIVE | EXPIRED | CANCELLED | LAPSED
+  cancellationDate   DateTime?
+  cancellationReason String?
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  customer      CustomerProfile  @relation(fields: [customerId], references: [id])
+  agent         User             @relation("AgentPolicies", fields: [agentId], references: [id])
+  product       InsuranceProduct @relation(fields: [productId], references: [id])
+  plan          InsurancePlan    @relation(fields: [planId], references: [id])
+  beneficiaries Beneficiary[]
+  claims        Claim[]
+  payments      Payment[]
+  commissions   Commission[]
+
+  @@index([policyNumber])
+  @@index([status])
+  @@index([customerId])
+  @@index([agentId])
+}
+
+model Beneficiary {
+  id         String    @id @default(cuid())
+  policyId   String
+  firstName  String
+  lastName   String
+  relation   String // SPOUSE | CHILD | PARENT | SIBLING | OTHER
+  idCard     String?
+  birthDate  DateTime?
+  percentage Float     @default(100)
+  phone      String?
+  isPrimary  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([policyId])
+}
+
+// Claims
+model Claim {
+  id              String    @id @default(cuid())
+  claimNumber     String    @unique
+  policyId        String
+  productId       String
+  customerId      String
+  agentId         String?
+  incidentDate    DateTime
+  reportDate      DateTime  @default(now())
+  description     String
+  incidentPlace   String?
+  policeReportNo  String?
+  claimAmount     Float
+  approvedAmount  Float?
+  status          String    @default("SUBMITTED") // SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED | PAID | CLOSED
+  rejectionReason String?
+  paymentDate     DateTime?
+  paymentRef      String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  policy    Policy          @relation(fields: [policyId], references: [id])
+  product   InsuranceProduct @relation(fields: [productId], references: [id])
+  customer  CustomerProfile  @relation(fields: [customerId], references: [id])
+  agent     User?            @relation("AgentClaims", fields: [agentId], references: [id])
+  events    ClaimEvent[]
+  documents ClaimDocument[]
+
+  @@index([claimNumber])
+  @@index([status])
+  @@index([policyId])
+}
+
+model ClaimEvent {
+  id          String   @id @default(cuid())
+  claimId     String
+  status      String
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+}
+
+model ClaimDocument {
+  id           String   @id @default(cuid())
+  claimId      String
+  documentId   String
+  documentType String? // EVIDENCE | REPORT | RECEIPT | OTHER
+  createdAt    DateTime @default(now())
+
+  claim    Claim    @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [documentId], references: [id])
+
+  @@index([claimId])
+  @@index([documentId])
+}
+
+// Payments
+model Payment {
+  id            String    @id @default(cuid())
+  receiptNumber String    @unique
+  policyId      String?
+  customerId    String?
+  amount        Float
+  method        String // CASH | TRANSFER | CARD | CHEQUE | INSTALLMENT
+  type          String // PREMIUM | COMMISSION | CLAIM_PAYOUT | OTHER
+  status        String    @default("PENDING") // PENDING | PAID | OVERDUE | CANCELLED | REFUNDED
+  paidAt        DateTime?
+  dueDate       DateTime?
+  reference     String?
+  notes         String?
+  receivedById  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  policy     Policy?          @relation(fields: [policyId], references: [id])
+  customer   CustomerProfile? @relation(fields: [customerId], references: [id])
+  receivedBy User?            @relation("PaymentReceiver", fields: [receivedById], references: [id])
+
+  @@index([receiptNumber])
+  @@index([status])
+}
+
+// Commissions
+model Commission {
+  id        String    @id @default(cuid())
+  agentId   String
+  policyId  String
+  amount    Float
+  rate      Float
+  type      String    @default("FIRST_YEAR") // FIRST_YEAR | RENEWAL | BONUS
+  status    String    @default("PENDING") // PENDING | APPROVED | PAID | CANCELLED
+  paidAt    DateTime?
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  agent  User   @relation(fields: [agentId], references: [id])
+  policy Policy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([status])
+}
+
+// Document library
+model Document {
+  id           String   @id @default(cuid())
+  filename     String
+  originalName String
+  mimeType     String
+  size         Int
+  path         String
+  type         String? // ID_CARD | MEDICAL_REPORT | PHOTO | CLAIM_EVIDENCE | POLICY_DOC | INVOICE | OTHER
+  description  String?
+  customerId   String?
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  customer  CustomerProfile? @relation(fields: [customerId], references: [id])
+  claimDocs ClaimDocument[]
+
+  @@index([customerId])
+  @@index([type])
+}
+
+// Notifications
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String   @default("INFO") // INFO | WARNING | SUCCESS | ERROR
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+// Audit log
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation("ActorLogs", fields: [actorId], references: [id])
+
+  @@index([entity])
+  @@index([actorId])
+  @@index([createdAt])
+}
